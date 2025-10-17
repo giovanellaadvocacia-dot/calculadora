@@ -1,0 +1,776 @@
+'use client';
+import React, { useState, useMemo } from 'react';
+import {
+  Calculator,
+  TrendingUp,
+  AlertCircle,
+  CheckCircle,
+  DollarSign,
+  Calendar,
+  LogIn,
+  LogOut,
+  User
+} from 'lucide-react';
+
+export default function CalculadoraIRDividendos() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [currentUser, setCurrentUser] = useState('');
+
+  // Estados da calculadora
+  const [dividendosMes, setDividendosMes] = useState('');
+  const [rendimentosMes, setRendimentosMes] = useState('');
+  const [rendimentosAno, setRendimentosAno] = useState('');
+  const [aliquotaEfetivaPJ, setAliquotaEfetivaPJ] = useState('34');
+  const [lucrosAte2025, setLucrosAte2025] = useState(false);
+  const [aprovadoAte2025, setAprovadoAte2025] = useState(false);
+  const [deducoes, setDeducoes] = useState('');
+
+  // Login demo (front-end). Em produção, usar backend/SDK de auth.
+  const handleLogin = (e) => {
+    if (e?.preventDefault) e.preventDefault();
+    const u = username.trim();
+    const p = password.trim();
+    if (u && p) {
+      setIsLoggedIn(true);
+      setCurrentUser(u);
+      setLoginError('');
+    } else {
+      setLoginError('Por favor, preencha usuário e senha');
+    }
+  };
+
+  const handleLogout = () => {
+    setIsLoggedIn(false);
+    setUsername('');
+    setPassword('');
+    setCurrentUser('');
+  };
+
+  // Cálculo do IRPF sobre rendimentos do trabalho (tabela progressiva 2025)
+  const calcularIRPFTrabalho = (rendimentoAnual, deducoesAnuais) => {
+    const base = (rendimentoAnual || 0) - (deducoesAnuais || 0);
+
+    let irDevido = 0;
+    if (base <= 0) return { irDevido: 0, aliquotaEfetiva: 0, baseCalculo: 0 };
+
+    // Tabela progressiva 2025
+    if (base <= 24511.92) {
+      irDevido = 0;
+    } else if (base <= 33919.80) {
+      irDevido = (base - 24511.92) * 0.075;
+    } else if (base <= 45012.60) {
+      irDevido =
+        (33919.80 - 24511.92) * 0.075 + (base - 33919.80) * 0.15;
+    } else if (base <= 55976.16) {
+      irDevido =
+        (33919.80 - 24511.92) * 0.075 +
+        (45012.60 - 33919.80) * 0.15 +
+        (base - 45012.60) * 0.225;
+    } else {
+      irDevido =
+        (33919.80 - 24511.92) * 0.075 +
+        (45012.60 - 33919.80) * 0.15 +
+        (55976.16 - 45012.60) * 0.225 +
+        (base - 55976.16) * 0.275;
+    }
+
+    const aliquotaEfetiva =
+      rendimentoAnual > 0 ? (irDevido / rendimentoAnual) * 100 : 0;
+
+    return { irDevido, aliquotaEfetiva, baseCalculo: base };
+  };
+
+  const calculos = useMemo(() => {
+    const divMes = parseFloat(dividendosMes) || 0;
+    const rendMes = parseFloat(rendimentosMes) || 0;
+    const rendAno = parseFloat(rendimentosAno) || 0;
+    const aliqPJ = parseFloat(aliquotaEfetivaPJ) || 0;
+    const deduc = parseFloat(deducoes) || 0;
+
+    // CÁLCULO IRPF SOBRE RENDIMENTOS DO TRABALHO
+    const rendimentoTrabalhoAnual = rendAno + rendMes * 12;
+    const irpfTrabalho = calcularIRPFTrabalho(rendimentoTrabalhoAnual, deduc);
+
+    // RETENÇÃO NA FONTE SOBRE DIVIDENDOS (MENSAL)
+    let retencaoFonte = 0;
+    let baseRetencao = 0;
+    let isento = false;
+
+    if (lucrosAte2025 && aprovadoAte2025) {
+      isento = true;
+    } else if (divMes > 50000) {
+      baseRetencao = divMes - 50000;
+      retencaoFonte = baseRetencao * 0.10;
+    }
+
+    // IMPOSTO MÍNIMO ANUAL (IRPFM)
+    const rendaTotalAnual = rendimentoTrabalhoAnual + divMes * 12;
+    let irpfm = 0;
+    let aliquotaIRPFM = 0;
+
+    if (rendaTotalAnual > 600000 && !isento) {
+      if (rendaTotalAnual <= 1200000) {
+        const faixaProgressiva = rendaTotalAnual - 600000;
+        aliquotaIRPFM = (faixaProgressiva / 600000) * 10;
+        irpfm = rendaTotalAnual * (aliquotaIRPFM / 100);
+      } else {
+        aliquotaIRPFM = 10;
+        irpfm = rendaTotalAnual * 0.10;
+      }
+    }
+
+    const retencaoAnual = retencaoFonte * 12;
+    let saldoAjusteAnual = irpfm + irpfTrabalho.irDevido - retencaoAnual;
+
+    // REDUTOR DE TRIBUTAÇÃO COMBINADA
+    const limiteTributacao = aliqPJ;
+    const tributacaoCombinada = aliqPJ + aliquotaIRPFM;
+    let redutor = 0;
+    let tributacaoFinal = tributacaoCombinada;
+
+    if (tributacaoCombinada > limiteTributacao) {
+      redutor = tributacaoCombinada - limiteTributacao;
+      tributacaoFinal = limiteTributacao;
+      const valorRedutor = divMes * 12 * (redutor / 100);
+      saldoAjusteAnual -= valorRedutor;
+    }
+
+    const ultrapassaLimite = tributacaoCombinada > limiteTributacao;
+
+    return {
+      divMes,
+      retencaoFonte,
+      baseRetencao,
+      isento,
+      rendaTotalAnual,
+      irpfm,
+      aliquotaIRPFM,
+      saldoAjusteAnual,
+      aliqPJ,
+      tributacaoCombinada,
+      tributacaoFinal,
+      redutor,
+      ultrapassaLimite,
+      retencaoAnual,
+      irpfTrabalho,
+      rendimentoTrabalhoAnual
+    };
+  }, [
+    dividendosMes,
+    rendimentosMes,
+    rendimentosAno,
+    aliquotaEfetivaPJ,
+    lucrosAte2025,
+    aprovadoAte2025,
+    deducoes
+  ]);
+
+  const formatCurrency = (value) =>
+    new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL'
+    }).format(Number.isFinite(value) ? value : 0);
+
+  const formatPercent = (value) => {
+    const v = Number.isFinite(value) ? value : 0;
+    return v.toFixed(2) + '%';
+  };
+
+  // TELA DE LOGIN
+  if (!isLoggedIn) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-6">
+        <div className="bg-white rounded-lg shadow-2xl p-8 max-w-md w-full">
+          {/* Logo */}
+          <div className="flex justify-center mb-8">
+            <div className="text-center">
+              <div className="mb-4">
+                <svg viewBox="0 0 200 80" className="w-48 h-20 mx-auto">
+                  <text
+                    x="50%"
+                    y="35"
+                    textAnchor="middle"
+                    fill="#D4AF37"
+                    fontSize="40"
+                    fontWeight="bold"
+                    fontFamily="Arial, sans-serif"
+                  >
+                    NK
+                  </text>
+                  <text
+                    x="50%"
+                    y="60"
+                    textAnchor="middle"
+                    fill="#4B5563"
+                    fontSize="18"
+                    fontWeight="600"
+                    fontFamily="Arial, sans-serif"
+                  >
+                    NAKAMURA
+                  </text>
+                  <text
+                    x="50%"
+                    y="75"
+                    textAnchor="middle"
+                    fill="#6B7280"
+                    fontSize="10"
+                    letterSpacing="2"
+                    fontFamily="Arial, sans-serif"
+                  >
+                    ADVOGADOS
+                  </text>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <h2 className="text-2xl font-bold text-gray-800 text-center mb-6">
+            Sistema de Cálculo Tributário
+          </h2>
+
+          <form onSubmit={handleLogin} className="space-y-4" noValidate>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Usuário
+              </label>
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <input
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  placeholder="Digite seu usuário"
+                  autoComplete="username"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Senha
+              </label>
+              <div className="relative">
+                <LogIn className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  placeholder="Digite sua senha"
+                  autoComplete="current-password"
+                />
+              </div>
+            </div>
+
+            {loginError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+                {loginError}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleLogin}
+              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-lg transition duration-200 flex items-center justify-center gap-2"
+            >
+              <LogIn className="w-5 h-5" />
+              Entrar no Sistema
+            </button>
+          </form>
+
+          <div className="mt-6 text-center text-xs text-gray-500">
+            <p>Calculadora PL 1087/2025 - Tributação de Dividendos</p>
+            <p className="mt-1">© 2025 Nakamura Advogados</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // TELA DA CALCULADORA (após login)
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-6">
+      <div className="max-w-7xl mx-auto">
+        {/* Header com Logo e Logout */}
+        <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-4">
+              <svg viewBox="0 0 200 80" className="w-32 h-14">
+                <text
+                  x="50%"
+                  y="35"
+                  textAnchor="middle"
+                  fill="#D4AF37"
+                  fontSize="40"
+                  fontWeight="bold"
+                  fontFamily="Arial, sans-serif"
+                >
+                  NK
+                </text>
+                <text
+                  x="50%"
+                  y="60"
+                  textAnchor="middle"
+                  fill="#4B5563"
+                  fontSize="18"
+                  fontWeight="600"
+                  fontFamily="Arial, sans-serif"
+                >
+                  NAKAMURA
+                </text>
+                <text
+                  x="50%"
+                  y="75"
+                  textAnchor="middle"
+                  fill="#6B7280"
+                  fontSize="10"
+                  letterSpacing="2"
+                  fontFamily="Arial, sans-serif"
+                >
+                  ADVOGADOS
+                </text>
+              </svg>
+              <div className="border-l-2 border-gray-300 pl-4">
+                <h1 className="text-2xl font-bold text-gray-800">
+                  Calculadora de Imposto de Renda
+                </h1>
+                <p className="text-sm text-gray-600">
+                  Usuário: <span className="font-semibold">{currentUser}</span>
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition"
+            >
+              <LogOut className="w-4 h-4" />
+              Sair
+            </button>
+          </div>
+
+          <div className="flex items-center gap-3 mb-2">
+            <Calculator className="w-6 h-6 text-indigo-600" />
+            <p className="text-sm text-gray-600">
+              PL 1087/2025 - Aprovado pela Câmara em 01/10/2025 (em tramitação
+              no Senado)
+            </p>
+          </div>
+
+          <div className="mt-4 bg-yellow-50 border-l-4 border-yellow-400 p-4">
+            <div className="flex items-start">
+              <AlertCircle className="w-5 h-5 text-yellow-600 mr-2 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-yellow-800">
+                <strong>Vigência:</strong> As regras entram em vigor a partir de
+                janeiro de 2026, se aprovado pelo Senado e sancionado. Lucros de
+                2025 aprovados até 31/12/2025 podem ser distribuídos até 2028
+                sem tributação.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Formulário de Entrada */}
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+              <DollarSign className="w-5 h-5" />
+              Dados de Entrada
+            </h2>
+
+            <div className="space-y-4">
+              <div className="bg-indigo-50 p-3 rounded-lg">
+                <h3 className="font-semibold text-indigo-800 mb-2">
+                  💼 Rendimentos do Trabalho
+                </h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Salários/Honorários no mês (R$)
+                    </label>
+                    <input
+                      type="number"
+                      value={rendimentosMes}
+                      onChange={(e) => setRendimentosMes(e.target.value)}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      placeholder="Ex: 20000"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Total de rendimentos do trabalho no ano (R$)
+                    </label>
+                    <input
+                      type="number"
+                      value={rendimentosAno}
+                      onChange={(e) => setRendimentosAno(e.target.value)}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      placeholder="Ex: 240000"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Deduções legais anuais (R$)
+                    </label>
+                    <input
+                      type="number"
+                      value={deducoes}
+                      onChange={(e) => setDeducoes(e.target.value)}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      placeholder="Ex: 30000 (INSS, dependentes, etc)"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      INSS, dependentes, educação, saúde, previdência privada
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-green-50 p-3 rounded-lg">
+                <h3 className="font-semibold text-green-800 mb-2">💰 Dividendos</h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Dividendos recebidos no mês (R$)
+                    </label>
+                    <input
+                      type="number"
+                      value={dividendosMes}
+                      onChange={(e) => setDividendosMes(e.target.value)}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      placeholder="Ex: 100000"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Alíquota efetiva de IRPJ + CSLL da empresa (%)
+                    </label>
+                    <select
+                      value={aliquotaEfetivaPJ}
+                      onChange={(e) => setAliquotaEfetivaPJ(e.target.value)}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value="34">34% (Lucro Real/Presumido - padrão)</option>
+                      <option value="40">40% (Instituições Financeiras)</option>
+                      <option value="45">
+                        45% (Instituições Financeiras especiais)
+                      </option>
+                      <option value="20">20% (Carga efetiva reduzida)</option>
+                      <option value="25">25% (Carga efetiva média)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border-t pt-4">
+                <label className="flex items-center gap-2 mb-3">
+                  <Calendar className="w-5 h-5 text-indigo-600" />
+                  <span className="text-sm font-medium text-gray-700">
+                    Regra de Transição (Isenção)
+                  </span>
+                </label>
+
+                <div className="space-y-2 pl-7">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={lucrosAte2025}
+                      onChange={(e) => setLucrosAte2025(e.target.checked)}
+                      className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500"
+                    />
+                    <span className="text-sm text-gray-700">
+                      Lucros referentes a resultados até 2025
+                    </span>
+                  </label>
+
+                  {lucrosAte2025 && (
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={aprovadoAte2025}
+                        onChange={(e) => setAprovadoAte2025(e.target.checked)}
+                        className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500"
+                      />
+                      <span className="text-sm text-gray-700">
+                        Distribuição aprovada até 31/12/2025
+                      </span>
+                    </label>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Resultados */}
+          <div className="space-y-6">
+            {/* IRPF sobre Rendimentos do Trabalho */}
+            <div className="bg-white rounded-lg shadow-lg p-6">
+              <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+                <TrendingUp className="w-5 h-5" />
+                IRPF - Rendimentos do Trabalho
+              </h2>
+
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-blue-50 p-3 rounded">
+                    <p className="text-xs text-gray-600">Rendimento anual</p>
+                    <p className="text-lg font-bold text-gray-800">
+                      {formatCurrency(calculos.rendimentoTrabalhoAnual)}
+                    </p>
+                  </div>
+                  <div className="bg-blue-50 p-3 rounded">
+                    <p className="text-xs text-gray-600">Base de cálculo</p>
+                    <p className="text-lg font-bold text-gray-800">
+                      {formatCurrency(calculos.irpfTrabalho.baseCalculo)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="border-t pt-3">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-sm text-gray-600">Alíquota efetiva:</span>
+                    <span className="font-semibold">
+                      {formatPercent(calculos.irpfTrabalho.aliquotaEfetiva)}
+                    </span>
+                  </div>
+                  <div className="bg-indigo-50 p-4 rounded-lg">
+                    <p className="text-sm text-gray-700 mb-1">
+                      IR devido (tabela progressiva):
+                    </p>
+                    <p className="text-3xl font-bold text-indigo-600">
+                      {formatCurrency(calculos.irpfTrabalho.irDevido)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Retenção na Fonte - Dividendos */}
+            <div className="bg-white rounded-lg shadow-lg p-6">
+              <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+                <DollarSign className="w-5 h-5" />
+                Retenção sobre Dividendos (Mensal)
+              </h2>
+
+              {calculos.isento ? (
+                <div className="bg-green-50 border-l-4 border-green-400 p-4">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="w-5 h-5 text-green-600" />
+                    <p className="text-sm font-semibold text-green-800">
+                      Dividendos isentos pela regra de transição
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div className="bg-gray-50 p-3 rounded">
+                      <p className="text-xs text-gray-600">Dividendos no mês</p>
+                      <p className="text-lg font-bold text-gray-800">
+                        {formatCurrency(calculos.divMes)}
+                      </p>
+                    </div>
+                    <div className="bg-gray-50 p-3 rounded">
+                      <p className="text-xs text-gray-600">Faixa isenta</p>
+                      <p className="text-lg font-bold text-green-600">
+                        {formatCurrency(50000)}
+                      </p>
+                    </div>
+                  </div>
+
+                  {calculos.baseRetencao > 0 ? (
+                    <div className="bg-red-50 p-4 rounded-lg">
+                      <p className="text-sm text-gray-700 mb-2">
+                        Base: {formatCurrency(calculos.baseRetencao)} × 10%
+                      </p>
+                      <div className="border-t border-red-200 pt-3">
+                        <p className="text-xs text-gray-600 mb-1">
+                          IR retido na fonte:
+                        </p>
+                        <p className="text-3xl font-bold text-red-600">
+                          {formatCurrency(calculos.retencaoFonte)}
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-green-50 border-l-4 border-green-400 p-4">
+                      <p className="text-sm text-green-800">
+                        Dentro da faixa de isenção mensal
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Ajuste Anual Consolidado */}
+            <div className="bg-white rounded-lg shadow-lg p-6">
+              <h2 className="text-xl font-bold text-gray-800 mb-4">
+                Ajuste Anual Consolidado
+              </h2>
+
+              <div className="space-y-4">
+                <div className="bg-gradient-to-r from-indigo-50 to-purple-50 p-4 rounded-lg">
+                  <p className="text-sm text-gray-700 mb-1">Renda total anual:</p>
+                  <p className="text-2xl font-bold text-indigo-600">
+                    {formatCurrency(calculos.rendaTotalAnual)}
+                  </p>
+                </div>
+
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between py-2 border-b">
+                    <span className="text-gray-600">IRPF (trabalho):</span>
+                    <span className="font-semibold">
+                      {formatCurrency(calculos.irpfTrabalho.irDevido)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between py-2 border-b">
+                    <span className="text-gray-600">IRPFM (dividendos):</span>
+                    <span className="font-semibold">
+                      {formatCurrency(calculos.irpfm)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between py-2 border-b text-green-600">
+                    <span>Retenções pagas:</span>
+                    <span className="font-semibold">
+                      -{formatCurrency(calculos.retencaoAnual)}
+                    </span>
+                  </div>
+                </div>
+
+                <div
+                  className={`${
+                    calculos.saldoAjusteAnual >= 0
+                      ? 'bg-red-50 border-red-400'
+                      : 'bg-green-50 border-green-400'
+                  } p-4 rounded-lg border-l-4`}
+                >
+                  <p className="text-sm font-semibold mb-1">
+                    {calculos.saldoAjusteAnual >= 0
+                      ? '🔴 Imposto a pagar'
+                      : '✅ Restituição'}
+                    :
+                  </p>
+                  <p
+                    className={`text-3xl font-bold ${
+                      calculos.saldoAjusteAnual >= 0
+                        ? 'text-red-600'
+                        : 'text-green-600'
+                    }`}
+                  >
+                    {formatCurrency(Math.abs(calculos.saldoAjusteAnual))}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Tributação Combinada */}
+            <div className="bg-white rounded-lg shadow-lg p-6">
+              <h2 className="text-xl font-bold text-gray-800 mb-4">
+                Tributação Combinada (Empresa + PF)
+              </h2>
+
+              <div className="space-y-3">
+                <div className="flex justify-between items-center py-2 border-b">
+                  <span className="text-sm text-gray-600">IRPJ + CSLL:</span>
+                  <span className="font-semibold">
+                    {formatPercent(calculos.aliqPJ)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center py-2 border-b">
+                  <span className="text-sm text-gray-600">IRPFM:</span>
+                  <span className="font-semibold">
+                    {formatPercent(calculos.aliquotaIRPFM)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center py-2 border-b">
+                  <span className="text-sm text-gray-600">Total bruto:</span>
+                  <span className="font-semibold">
+                    {formatPercent(calculos.tributacaoCombinada)}
+                  </span>
+                </div>
+
+                {calculos.redutor > 0 && (
+                  <div className="flex justify-between items-center py-2 border-b text-green-600">
+                    <span className="text-sm">Redutor aplicado:</span>
+                    <span className="font-semibold">
+                      -{formatPercent(calculos.redutor)}
+                    </span>
+                  </div>
+                )}
+
+                <div
+                  className={`flex justify-between items-center py-3 px-4 rounded-lg ${
+                    calculos.ultrapassaLimite ? 'bg-yellow-100' : 'bg-green-100'
+                  }`}
+                >
+                  <span className="font-bold text-gray-800">
+                    Tributação final:
+                  </span>
+                  <span
+                    className={`text-2xl font-bold ${
+                      calculos.ultrapassaLimite
+                        ? 'text-yellow-700'
+                        : 'text-green-700'
+                    }`}
+                  >
+                    {formatPercent(calculos.tributacaoFinal)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Rodapé */}
+        <div className="bg-white rounded-lg shadow-lg p-6 mt-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold text-gray-800">
+              ℹ️ Resumo das Regras - PL 1087/2025
+            </h3>
+            <svg viewBox="0 0 200 80" className="w-24 h-10">
+              <text x="50%" y="35" textAnchor="middle" fill="#D4AF37" fontSize="40" fontWeight="bold">
+                NK
+              </text>
+              <text x="50%" y="60" textAnchor="middle" fill="#4B5563" fontSize="18" fontWeight="600">
+                NAKAMURA
+              </text>
+            </svg>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-700">
+            <div>
+              <h4 className="font-semibold text-indigo-600 mb-2">IRPF Tradicional</h4>
+              <ul className="list-disc list-inside space-y-1">
+                <li>Tabela progressiva 2025</li>
+                <li>Isento até R$ 24.511,92/ano</li>
+                <li>Alíquotas: 7,5%, 15%, 22,5% e 27,5%</li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-semibold text-indigo-600 mb-2">Dividendos - Retenção</h4>
+              <ul className="list-disc list-inside space-y-1">
+                <li>Isenção: R$ 50 mil/mês</li>
+                <li>10% sobre excedente</li>
+                <li>Retenção compensável</li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-semibold text-indigo-600 mb-2">IRPFM e Redutor</h4>
+              <ul className="list-disc list-inside space-y-1">
+                <li>Incide acima de R$ 600 mil/ano</li>
+                <li>Limite: 34%/40%/45% combinado</li>
+                <li>Vigência: 2026</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
